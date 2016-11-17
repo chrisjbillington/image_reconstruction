@@ -10,26 +10,40 @@ import skcuda.misc
 
 
 class CUDAReconstructor(object):
-    def __init__(self, n_ref_images=None):
-        self.n_ref_images = n_ref_images
+    def __init__(self, max_ref_images=None):
+        self.max_ref_images = max_ref_images
         self.initialised = False
         
     def _init(self, ref_image):
         skcuda.linalg.init()
         self.n_pixels = ref_image.size
-        if self.n_ref_images is None:
-            self.n_ref_images = int(np.sqrt(self.n_pixels))
+        if self.max_ref_images is None:
+            self.max_ref_images = int(np.sqrt(self.n_pixels))
         # GPU array of reference images as rows (hence equal to B.T).
         # It's initially full of random data.
         self.BT_gpu = XORWOWRandomNumberGenerator().gen_normal(
-            (self.n_ref_images, self.n_pixels), float)
+            (self.max_ref_images, self.n_pixels), float)
         self.next_ref_image_index = 0
         self.initialised = True
+        self.ref_image_hashes = []
+        self.n_ref_images = 0
         
     def add_ref_image(self, ref_image):
         """Add a reference image to the array of reference images used for reconstruction"""
         if not self.initialised:
             self._init(ref_image)
+            
+        # Hash the image to check for uniqueness:
+        imhash = hash(ref_image.data[:])
+        if imhash in self.ref_image_hashes:
+            # Ignore duplicate image
+            return
+        if self.n_ref_images < self.max_ref_images:
+            self.ref_image_hashes.append(imhash)
+        else:
+            self.ref_image_hashes[self.next_ref_image_index] = imhash
+        self.n_ref_images = len(self.ref_image_hashes)
+        
         # Send flattened, double precision reference image to the GPU:
         gpu_ref_image = gpuarray.to_gpu(ref_image.flatten().astype(float))
         # Compute 1D indices for the location in BT
@@ -42,7 +56,7 @@ class CUDAReconstructor(object):
         # Move our index along by one for where the next reference image will go:
         self.next_ref_image_index += 1
         # Wrap around to overwrite oldest images:
-        self.next_ref_image_index %= self.n_ref_images
+        self.next_ref_image_index %= self.max_ref_images
 
     def add_ref_images(self, ref_images):
         """Convenience function to add many reference images"""
