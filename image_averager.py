@@ -48,7 +48,7 @@ class ExpImageAverager(object):
         imhash = hash(image.data[:])
         if imhash in self.ref_image_hashes:
             # Ignore duplicate image
-            return
+            return self.average_image, self.variance_image
         if self.n_ref_images < self.max_ref_images:
             self.ref_image_hashes.append(imhash)
         else:
