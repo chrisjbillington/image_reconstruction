@@ -7,6 +7,7 @@ class ImageAverager(object):
     def __init__(self, max_ref_images=None):
         self.n_ref_images = 0
         self.max_ref_images = max_ref_images
+        self.next_ref_image_index = 0
         self.ref_image_hashes = []
         self.ref_images = []
 
@@ -24,6 +25,10 @@ class ImageAverager(object):
             self.ref_image_hashes[self.next_ref_image_index] = imhash
             self.ref_images[self.next_ref_image_index] = image
         self.n_ref_images = len(self.ref_images)
+        # Move our index along by one for where the next reference image will go:
+        self.next_ref_image_index += 1
+        # Wrap around to overwrite oldest images:
+        self.next_ref_image_index %= self.max_ref_images
 
     def get_average(self):
         return np.mean(self.ref_images, axis=0)
