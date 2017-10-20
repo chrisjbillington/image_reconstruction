@@ -13,7 +13,7 @@ class ImageAverager(object):
 
     def add_ref_image(self, image):
         # Hash the image to check for uniqueness:
-        imhash = hash(image.data[:])
+        imhash = hash(image.tobytes())
         if imhash in self.ref_image_hashes:
             # Ignore duplicate image
             return
