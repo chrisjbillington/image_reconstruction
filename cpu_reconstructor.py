@@ -26,7 +26,7 @@ class CPUReconstructor(object):
             self._init(ref_image)
             
         # Hash the image to check for uniqueness:
-        imhash = hash(ref_image.data[:])
+        imhash = hash(ref_image.tobytes())
         if imhash in self.ref_image_hashes:
             # Ignore duplicate image
             return
