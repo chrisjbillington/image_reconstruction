@@ -18,7 +18,7 @@ def test(ReconstructorClass, max_ref_images=None):
     import matplotlib.pyplot as plt
 
     # Get the test data from file:
-    with h5py.File("test_data.h5") as f:
+    with h5py.File("test_data.h5", 'r') as f:
         ref_probes = f['ref_probes'][:]
         atoms_images = f['atoms_images'][:]
         probe_images = f['probe_images'][:]
@@ -98,7 +98,7 @@ def test_cpu():
     from image_reconstruction.cpu_reconstructor import CPUReconstructor
     test(CPUReconstructor, 50)
     
-def test_pca():
+def test_pca_basis():
     print('testing pca of 23 reference images')
     import h5py
     from image_reconstruction.cpu_reconstructor import CPUReconstructor
@@ -124,16 +124,119 @@ def test_pca():
     plt.ylim(ymin=0)
     plt.xlim(xmin=0, xmax=21)
     plt.savefig('pca.png')
+    plt.clf()
 
     for i, image in enumerate([mean_image] + list(principal_components)):
         fname_prefix = os.path.join(outdir, '%02d'%i)
         cmap='gray'
         plt.imsave(fname_prefix + ".png", image, cmap=cmap)
 
+def test_1d_pca():
+
+    import h5py
+    import matplotlib.pyplot as plt
+    from image_reconstruction.cpu_reconstructor import CPUReconstructor
+
+    with h5py.File('test_1d_data.h5', 'r') as f:
+        data = f['images'][:]
+
+    # We have 19 29 x 490 images and are interested in reconstructing each
+    # 29-pixel vertical slice of each image using a basis based on the same
+    # slice and four nearest slices from the same image and 18 other images.
+
+    def get_reference_slices(image_index, x_index):
+        # Get the reference images to be used for reconstructing a particular slice
+        start_index = x_index - 2
+        stop_index = x_index + 3
+        # Where, relative to the start index, is the slice we are reconstructing?
+        offset = 2
+        while start_index < 0:
+            start_index += 1
+            stop_index += 1
+            offset -= 1
+        while stop_index >= 490:
+            start_index -= 1
+            stop_index -= 1
+            offset += 1
+
+        # The slices, shape (19, 29, 5) 
+        slices = data[:, :, start_index:stop_index]
+
+        # Transpose to get the vertical dimension first. Shape (29, 19, 5)
+        slices = slices.transpose((1, 0, 2))
+
+        # Flatten the last two dimensions so we have a (29, 95) array:
+        slices = slices.reshape(29, 5*19)
+
+        # Transpose again so we have each realisation as a row. Shape (95, 29)
+        slices = slices.transpose()
+
+        # Delete the row corresponding to the slice we are going to reconstruct.
+        # Resulting shape: (94, 29):
+        slices = np.delete(slices, image_index*5 + offset, axis=0)
+
+        # Verify for sure that the slice we're reconstructing is not in there:
+        for i in range(94):
+            assert not np.array_equal(slices[i], data[image_index, :, x_index])
+
+        return slices
+
+    # Let's reconstruct all the ODS in realisation 0
+    image_index = 0
+    image = data[0, :, :].copy()
+    mean_image = np.zeros(image.shape)
+
+    N = 5
+    # Reconstruct slice by slice:
+    reconstructed_image = np.zeros(image.shape)
+    for x_index in range(490):
+        print(x_index)
+        target_slice = image[:, x_index]
+        reference_slices = get_reference_slices(image_index, x_index)
+
+        # Make a reconstructor with these realisations as reference images:
+        reconstructor = CPUReconstructor(94)
+        reconstructor.add_ref_images(reference_slices)
+
+        reconstructed_slice, rchi2 = reconstructor.reconstruct(target_slice, n_principal_components=N)
+
+        mean_slice, _, _ = reconstructor.pca_images()
+        reconstructed_image[:, x_index] = reconstructed_slice
+        mean_image[:, x_index] = mean_slice
+
+    # reconstructed_image -= mean_image
+    # image -= mean_image
+
+    both_images = np.concatenate((image, reconstructed_image, image - reconstructed_image), axis=0)
+    plt.imsave('1d_reconstruction.png', both_images)
+
+    all_images = np.concatenate(data, axis=0)
+    plt.imsave('1d_all_orig.png', all_images)
+
+    plt.imsave('mean_image.png', mean_image)
     
+    column_density_orig = image.sum(axis=0)
+    plt.plot(column_density_orig, linewidth=1.0)
+    
+    column_density_recon = reconstructed_image.sum(axis=0)
+    plt.plot(column_density_recon, label=str(N), linewidth=1.0)
+
+    resid = column_density_recon - column_density_orig
+    stderr = resid.std() / np.sqrt(len(resid))
+    resid_mean_on_stderr = resid.mean()/stderr
+    plt.plot(resid, label=str(N) + ' residuals (mean/stderr= %s)' % str(resid_mean_on_stderr), linewidth=1)
+
+    mean_col_density = mean_image.sum(axis=0)
+    plt.plot(mean_col_density, label='mean')
+
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
 
 if __name__ == "__main__":
-    test_cpu()
-    test_pca()
-    test_cuda()
+    # test_cpu()
+    # test_pca_basis()
+    test_1d_pca()
+    # test_cuda()
     
