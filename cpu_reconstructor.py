@@ -8,8 +8,9 @@ def pca(BT):
     """Principal component analysis on set of reference vectors that are rows
     of BT. Returns the mean vector, principal components as rows of a matrix
     XT, and variance explained by each, with the most important principal
-    components first. One fewer principal component is returned than the
-    number of rows in BT.
+    components first. If the number of elements in each vector is greater than
+    the number of vectors, then n_elements principal components are returned.
+    otherwise n_vectors - 1 are returned.
     """
     num_refs, n_pixels = BT.shape
 
@@ -19,7 +20,7 @@ def pca(BT):
 
     X = XT.T
 
-    if num_refs < n_pixels:
+    if num_refs <= n_pixels:
         # Do PCA in the 'image basis' rather than the 'pixel basis' to avoid
         # constucting a potentially massive n_pixels x n_pixels matrix. Google
         # "PCA compact trick" for more info about this trick.
@@ -29,6 +30,11 @@ def pca(BT):
 
         # Diagonalise the covariance matrix:
         evals, evecs_image_basis = np.linalg.eigh(covariance_image_basis)
+
+        # Discard the eigenvector with smallest eigenvalue, due to the
+        # centering of the data, it is not orthogonal to the rest.
+        evals = evals[1:]
+        evecs_image_basis = evecs_image_basis[:, 1:]
 
         # Convert eigenvectors back into the pixel basis and normalise
         evecs_pixel_basis = np.dot(X, evecs_image_basis)
@@ -52,12 +58,9 @@ def pca(BT):
     # close to zero) is not orthogonal to the others. Discard it.
 
     # Reverse order of principal components and corresponding eigenvalues to
-    # put most important ones (i.e. biggest eigenvalues) first. Discard the
-    # eigenvector with the smallest eigenvalue - it is not orthogonal to the
-    # others since we have reduced the dimension of our space by one by
-    # centering the data:
-    principal_components = principal_components[:0:-1]
-    evals = evals[:0:-1]
+    # put most important ones (i.e. biggest eigenvalues) first:
+    principal_components = principal_components[::-1]
+    evals = evals[::-1]
 
     return mean_vector, principal_components, evals
 
@@ -75,7 +78,7 @@ class CPUReconstructor(object):
         # Array of reference images as rows (hence equal to B.T). It's
         # initially full of zeros, but we exclude the uninitialised
         # parts of the array from being used as reference images.
-        self.BT = np.random.randn(self.max_ref_images, self.n_pixels)
+        self.BT = np.zeros((self.max_ref_images, self.n_pixels))
         self.next_ref_image_index = 0
         self.initialised = True
         self.ref_image_hashes = []
@@ -120,7 +123,7 @@ class CPUReconstructor(object):
         """Return mean_image, principal_component_images, variances, the same
         as update_pca() except reshaped to the image shape"""
         mean_vector, principal_components, variances = self.pca()
-        shape = (self.n_ref_images - 1,) + self.image_shape
+        shape = (len(principal_components),) + self.image_shape
         principal_component_images = principal_components.reshape(shape)
         mean_image = mean_vector.reshape(self.image_shape)
         return mean_image, principal_component_images, variances
@@ -135,14 +138,20 @@ class CPUReconstructor(object):
             self.pca_results = pca(self.BT[:self.n_ref_images])
         return self.pca_results
 
-    def reconstruct(self, image, uncertainties, mask, n_principal_components=None):
+    def reconstruct(self, image, uncertainties=None, mask=None, n_principal_components=None):
         """Reconstruct image as a sum of reference images based on the
         weighted least squares solution in the region where mask=1. If
+        uncertainties or mask is None, all True will be used. If
         n_principal_components is not None, the reconstruction will use the
         requested number of principal components of the reference images
         instead of the reference images directly"""
         if not self.initialised:
             raise RuntimeError("No reference images added!")
+
+        if uncertainties is None:
+            uncertainties = np.ones(image.shape)
+        if mask is None:
+            mask = np.ones(image.shape, dtype=bool)
 
         # Calculate weights, and convert and reshape arrays:
         W = (mask/uncertainties**2).astype(float).flatten()
