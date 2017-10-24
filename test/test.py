@@ -36,7 +36,7 @@ def test(ReconstructorClass, max_ref_images=None):
     mask = np.ones(imshape, dtype=bool)
     mask[ROI_y:ROI_y + ROI_h, ROI_x:ROI_x + ROI_w] = 0
 
-    recon_probe, rchi2_recon = reconstructor.reconstruct(probe_images[0],
+    recon_probe_dummy, rchi2_recon = reconstructor.reconstruct(probe_images[0],
                                                          np.sqrt(probe_images[0]), mask)
     print('"Reconstruction" error of a reference image (should be zero) :', rchi2_recon)
     print()
@@ -66,7 +66,7 @@ def test(ReconstructorClass, max_ref_images=None):
 
         # Compare optical density images (approximate for sake of example - no background subtraction or anything):
         raw_OD = -np.log(raw_atoms/raw_probe)
-        reconstructed_OD = -np.log(raw_atoms/recon_probe)
+        reconstructed_OD = -np.log(raw_atoms/recon_probe_2)
 
         outdir = 'test_{}'.format(ReconstructorClass.__name__)
         if not os.path.exists(outdir):
@@ -76,7 +76,7 @@ def test(ReconstructorClass, max_ref_images=None):
         cmap='gray'
         plt.imsave(fname_prefix + "_0_raw_probe.png", raw_probe, vmin=0, vmax=raw_atoms.max(), cmap=cmap)
         plt.imsave(fname_prefix + "_1_raw_atoms.png", raw_atoms, vmin=0, vmax=raw_atoms.max(), cmap=cmap)
-        plt.imsave(fname_prefix + "_2_recon_probe.png", recon_probe, vmin=0, vmax=raw_atoms.max(), cmap=cmap)
+        plt.imsave(fname_prefix + "_2_recon_probe.png", recon_probe_2, vmin=0, vmax=raw_atoms.max(), cmap=cmap)
         plt.imsave(fname_prefix + "_5_raw_OD.png", raw_OD, vmin=0, vmax=reconstructed_OD.max(), cmap=cmap)
         plt.imsave(fname_prefix + "_5_recon_OD.png", reconstructed_OD, vmin=0, vmax=reconstructed_OD.max(), cmap=cmap)
 
@@ -96,7 +96,7 @@ def test_cpu():
     # This won't affect the reconstruction (much), but gives us a good estimate of
     # how long reconstruction would take if we did have ~50 reference images. 
     from image_reconstruction.cpu_reconstructor import CPUReconstructor
-    test(CPUReconstructor, 50)
+    test(CPUReconstructor, 200)
     
     
 if __name__ == "__main__":
