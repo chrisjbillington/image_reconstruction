@@ -3,7 +3,7 @@ from __future__ import division, print_function, absolute_import
 
 import numpy as np
 import matplotlib
-matplotlib.use('Agg')
+# matplotlib.use('Agg')
 
 import sys
 # Add path to modules
@@ -96,9 +96,44 @@ def test_cpu():
     # This won't affect the reconstruction (much), but gives us a good estimate of
     # how long reconstruction would take if we did have ~50 reference images. 
     from image_reconstruction.cpu_reconstructor import CPUReconstructor
-    test(CPUReconstructor, 200)
+    test(CPUReconstructor, 50)
     
+def test_pca():
+    print('testing pca of 23 reference images')
+    import h5py
+    from image_reconstruction.cpu_reconstructor import CPUReconstructor
+    reconstructor = CPUReconstructor(50)
+
+    with h5py.File("test_data.h5") as f:
+        ref_probes = f['ref_probes'][:]
+
+    reconstructor.add_ref_images(ref_probes)
+    mean_image, principal_components, evals = reconstructor.pca_images()
+
+    outdir = 'pca_basis'
+    import os
+    if not os.path.exists(outdir):
+        os.mkdir(outdir)
+
+    import matplotlib.pyplot as plt
+
+    plt.plot(evals/mean_image.sum(), 'o-')
+    plt.xlabel('principal component')
+    plt.ylabel('variance explained in units of shot noise')
+    plt.grid(True)
+    plt.ylim(ymin=0)
+    plt.xlim(xmin=0, xmax=21)
+    plt.savefig('pca.png')
+
+    for i, image in enumerate([mean_image] + list(principal_components)):
+        fname_prefix = os.path.join(outdir, '%02d'%i)
+        cmap='gray'
+        plt.imsave(fname_prefix + ".png", image, cmap=cmap)
+
     
+
 if __name__ == "__main__":
     test_cpu()
+    test_pca()
     test_cuda()
+    
