@@ -223,10 +223,10 @@ def test_1d_pca():
     resid = column_density_recon - column_density_orig
     stderr = resid.std() / np.sqrt(len(resid))
     resid_mean_on_stderr = resid.mean()/stderr
-    plt.plot(resid, label=str(N) + ' residuals (mean/stderr= %s)' % str(resid_mean_on_stderr), linewidth=1)
+    plt.plot(resid, label=str(N) + ' residuals\n($\mu$= %.01f stderrs)' % (resid_mean_on_stderr), linewidth=1)
 
-    mean_col_density = mean_image.sum(axis=0)
-    plt.plot(mean_col_density, label='mean')
+    # mean_col_density = mean_image.sum(axis=0)
+    # plt.plot(mean_col_density, label='mean')
 
     plt.legend()
     plt.grid(True)
