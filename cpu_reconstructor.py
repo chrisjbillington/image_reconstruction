@@ -141,15 +141,16 @@ class CPUReconstructor(object):
     def reconstruct(self, image, uncertainties=None, mask=None, n_principal_components=None):
         """Reconstruct image as a sum of reference images based on the
         weighted least squares solution in the region where mask=1. If
-        uncertainties or mask is None, all True will be used. If
-        n_principal_components is not None, the reconstruction will use the
-        requested number of principal components of the reference images
-        instead of the reference images directly"""
+        uncertainties is None, all ones will be used. If mask is None, all
+        True will be used. If n_principal_components is not None, the
+        reconstruction will use the requested number of principal components
+        of the reference images instead of the reference images directly"""
         if not self.initialised:
             raise RuntimeError("No reference images added!")
 
         if uncertainties is None:
             uncertainties = np.ones(image.shape)
+            
         if mask is None:
             mask = np.ones(image.shape, dtype=bool)
 

@@ -91,18 +91,16 @@ def test_cuda():
     
     
 def test_cpu():
-    print("Testing CPU reconstruction with 50 reference images")
-    # Note that we only have 23 reference images, so the others will be random noise.
-    # This won't affect the reconstruction (much), but gives us a good estimate of
-    # how long reconstruction would take if we did have ~50 reference images. 
+    print("Testing CPU reconstruction with 23 reference images")
     from image_reconstruction.cpu_reconstructor import CPUReconstructor
-    test(CPUReconstructor, 50)
+    test(CPUReconstructor, 23)
     
 def test_pca_basis():
     print('testing pca of 23 reference images')
     import h5py
     from image_reconstruction.cpu_reconstructor import CPUReconstructor
-    reconstructor = CPUReconstructor(50)
+    # max 50 images, but there are actually only 23:
+    reconstructor = CPUReconstructor(50) 
 
     with h5py.File("test_data.h5") as f:
         ref_probes = f['ref_probes'][:]
@@ -130,6 +128,7 @@ def test_pca_basis():
         fname_prefix = os.path.join(outdir, '%02d'%i)
         cmap='gray'
         plt.imsave(fname_prefix + ".png", image, cmap=cmap)
+
 
 def test_1d_pca():
 
@@ -214,7 +213,7 @@ def test_1d_pca():
     plt.imsave('1d_all_orig.png', all_images)
 
     plt.imsave('mean_image.png', mean_image)
-    
+
     column_density_orig = image.sum(axis=0)
     plt.plot(column_density_orig, linewidth=1.0)
     
@@ -231,12 +230,13 @@ def test_1d_pca():
 
     plt.legend()
     plt.grid(True)
-    plt.show()
+    plt.savefig('1d_column_density.png')
+    # plt.show()
 
 
 if __name__ == "__main__":
-    # test_cpu()
-    # test_pca_basis()
+    test_cpu()
+    test_pca_basis()
     test_1d_pca()
     # test_cuda()
     
