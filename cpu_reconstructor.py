@@ -132,11 +132,40 @@ class CPUReconstructor(object):
         """Check if principal component analysis has been done on the current
         set of reference images and do it if it hasn't. Return mean_vector,
         principal_components, variances"""
-        if not self.initialised:
-            raise RuntimeError("No reference images added!")
+        if not self.initialised and self.pca_results is None:
+            msg = "No reference images added or previously computed PCA basis loaded"
+            raise RuntimeError(msg)
         if self.pca_results is None:
             self.pca_results = pca(self.BT[:self.n_ref_images])
         return self.pca_results
+
+    def save_pca(self, filepath):
+        """Save cached PCA results to disk as a .npz file"""
+        arrs = {}
+        arrs['mean_vector'], arrs['principal_components'], arrs['evals'] = self.pca()
+        arrs['image_shape'] = np.array(self.image_shape)
+        np.savez(filepath, **arrs)
+
+    def load_pca(self, filepath):
+        """Restore saved PCA results from disk. Since you may load any
+        previously computed PCA basis, this may or may not be consistent with
+        any reference images you have added (and you may have not added any
+        reference images at all). It is up to you to keep track of this: if
+        you call reconstruct() with n_principal_components not None, the PCA
+        basis will be used, otherwise the reference images will be used. If
+        you add more reference images, the PCA basis will deleted and
+        recomputed from the set of reference images. This could lead to subtle
+        mistakes if you are not careful."""
+        if not filepath.endswith('.npz'):
+            filepath += '.npz'
+        with np.load(filepath) as arrs:
+            image_shape = tuple(arrs['image_shape'])
+            if not self.initialised:
+                self._init(np.empty(shape))
+            elif self.image_shape != image_shape:
+                msg = 'image shape does not match'
+                raise ValueError(msg)
+            self.pca_results = arrs['mean_vector'], arrs['principal_components'], arrs['evals']
 
     def reconstruct(self, image, uncertainties=None, mask=None, n_principal_components=None):
         """Reconstruct image as a sum of reference images based on the
@@ -145,8 +174,9 @@ class CPUReconstructor(object):
         True will be used. If n_principal_components is not None, the
         reconstruction will use the requested number of principal components
         of the reference images instead of the reference images directly"""
-        if not self.initialised:
-            raise RuntimeError("No reference images added!")
+        if not self.initialised and self.pca_results is None:
+            msg = "No reference images added or previously computed PCA basis loaded"
+            raise RuntimeError(msg)
 
         if uncertainties is None:
             uncertainties = np.ones(image.shape)
