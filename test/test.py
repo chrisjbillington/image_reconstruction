@@ -108,6 +108,14 @@ def test_pca_basis():
     reconstructor.add_ref_images(ref_probes)
     mean_image, principal_components, evals = reconstructor.pca_images()
 
+    # Test saving PCA
+    orig_pca_results = reconstructor.pca_results
+    reconstructor.save_pca('pca')
+    reconstructor.pca_results = None
+    reconstructor.load_pca('pca')
+    for arr1, arr2 in zip(orig_pca_results, reconstructor.pca_results):
+        assert np.array_equal(arr1, arr2)
+
     outdir = 'pca_basis'
     import os
     if not os.path.exists(outdir):
