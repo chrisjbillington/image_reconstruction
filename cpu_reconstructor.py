@@ -28,8 +28,14 @@ def pca(BT):
         # Compute the covariance matrix in the image basis, (X.T X)
         covariance_image_basis = np.dot(XT, X)
 
+        # recover some memory:
+        del XT
+
         # Diagonalise the covariance matrix:
         evals, evecs_image_basis = np.linalg.eigh(covariance_image_basis)
+
+        # recover some memory:
+        del covariance_image_basis
 
         # Discard the eigenvector with smallest eigenvalue, due to the
         # centering of the data, it is not orthogonal to the rest.
@@ -38,6 +44,11 @@ def pca(BT):
 
         # Convert eigenvectors back into the pixel basis and normalise
         evecs_pixel_basis = np.dot(X, evecs_image_basis)
+
+        # recover some memory:
+        del X
+        del evecs_image_basis
+
         evecs_pixel_basis /= np.linalg.norm(evecs_pixel_basis, axis=0)
 
     else:
@@ -47,8 +58,15 @@ def pca(BT):
         # Compute the covariance matrix in the pixel basis, (X X.T):
         covariance_pixel_basis = np.dot(X, XT)
 
+        # recover some memory:
+        del XT
+        del X
+
         # Diagonalise the covariance matrix:
         evals, evecs_pixel_basis = np.linalg.eigh(covariance_pixel_basis)
+
+        # recover some memory:
+        del covariance_pixel_basis
 
     # Convert the eigenvectors to row vectors:
     principal_components = evecs_pixel_basis.T
@@ -86,6 +104,9 @@ class CPUReconstructor(object):
 
         # Cache the results of PCA:
         self.pca_results = None
+
+        # Cache the LHS of the system of linear equations:
+        self.cached_LHS = None
         
     def add_ref_image(self, ref_image):
         """Add a reference image to the array of reference images used for
@@ -113,7 +134,11 @@ class CPUReconstructor(object):
 
         # Mark PCA as out of date
         self.pca_results = None
-        
+
+        # Mark cached LHS as out of date:
+        self.cached_LHS = None
+
+
     def add_ref_images(self, ref_images):
         """Convenience function to add many reference images"""
         for ref_image in ref_images:
@@ -140,11 +165,14 @@ class CPUReconstructor(object):
         return self.pca_results
 
     def save_pca(self, filepath):
-        """Save cached PCA results to disk as a .npz file"""
-        arrs = {}
-        arrs['mean_vector'], arrs['principal_components'], arrs['evals'] = self.pca()
-        arrs['image_shape'] = np.array(self.image_shape)
-        np.savez(filepath, **arrs)
+        """Save cached PCA results to disk"""
+        mean_vector, principal_component, evals = self.pca()
+        image_shape = np.array(self.image_shape)
+        with open(filepath, 'wb') as f:
+            np.save(f, image_shape)
+            np.save(f, mean_vector)
+            np.save(f, principal_component)
+            np.save(f, evals)
 
     def load_pca(self, filepath):
         """Restore saved PCA results from disk. Since you may load any
@@ -156,16 +184,22 @@ class CPUReconstructor(object):
         you add more reference images, the PCA basis will deleted and
         recomputed from the set of reference images. This could lead to subtle
         mistakes if you are not careful."""
-        if not filepath.endswith('.npz'):
-            filepath += '.npz'
-        with np.load(filepath) as arrs:
-            image_shape = tuple(arrs['image_shape'])
-            if not self.initialised:
-                self._init(np.empty(shape))
-            elif self.image_shape != image_shape:
-                msg = 'image shape does not match'
-                raise ValueError(msg)
-            self.pca_results = arrs['mean_vector'], arrs['principal_components'], arrs['evals']
+        with open(filepath, 'rb') as f:
+            image_shape = np.load(f, allow_pickle=False)
+            mean_vector = np.load(f, allow_pickle=False)
+            principal_components = np.load(f, allow_pickle=False)
+            evals = np.load(f)
+
+        image_shape = tuple(image_shape)
+        if not self.initialised:
+            self._init(np.empty(image_shape))
+        elif self.image_shape != image_shape:
+            msg = 'image shape does not match'
+            raise ValueError(msg)
+        self.pca_results = mean_vector, principal_components, evals
+        # Mark cached LHS as out of date:
+        self.cached_LHS = None
+
 
     def reconstruct(self, image, uncertainties=None, mask=None, n_principal_components=None):
         """Reconstruct image as a sum of reference images based on the
@@ -179,10 +213,15 @@ class CPUReconstructor(object):
             raise RuntimeError(msg)
 
         if uncertainties is None:
+            # Reconstruction will be unweighted:
             uncertainties = np.ones(image.shape)
             
         if mask is None:
+            # Reconstruction will be unmasked:
             mask = np.ones(image.shape, dtype=bool)
+        else:
+            # Convert to bool if not already:
+            mask = mask.astype(bool)
 
         # Calculate weights, and convert and reshape arrays:
         W = (mask/uncertainties**2).astype(float).flatten()
@@ -202,12 +241,27 @@ class CPUReconstructor(object):
         # for x and then reconstruct the image as:
         #     a_rec = B x
         
-        # Compute (B.T W):
+        # Compute (B.T W) and B:
         BTW = BT * W
-        
-        # Compute the LHS of the linear system, (B.T W B)
         B = BT.T
-        BTWB = np.dot(BTW, B)
+
+        # Compute the LHS of the linear system, (B.T W B)
+        BTWB = None
+        if self.cached_LHS is not None:
+            cached_n_pc, cached_W, cached_LHS = self.cached_LHS
+            # If the weights and number of principal_components (or None)
+            # are the same as when the LHS was cached, then use the cache:
+            if cached_n_pc == n_principal_components and np.array_equal(cached_W, W):
+                BTWB = cached_LHS
+        if BTWB is None:
+            # If there was nothing cached, or if the weights or number of
+            # principal components didn't match the cache, recompute the LHS:
+            BTWB = np.dot(BTW, B)
+
+            # Save the LHS of the linear system, since it is expensive to
+            # recompute. Save the mask and n_principal_components, since
+            # re-using the cache is only valid if they are the same:
+            self.cached_LHS = n_principal_components, W, BTWB
         
         # Compute the RHS of the linear system, (B.T W) a:
         BTWa = np.dot(BTW, a)
