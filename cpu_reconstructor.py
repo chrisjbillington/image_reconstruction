@@ -1,5 +1,6 @@
 from __future__ import division, print_function
 import numpy as np
+from scipy.linalg import lu_factor, lu_solve
 
 from . import reduced_chi2
 
@@ -249,7 +250,7 @@ class CPUReconstructor(object):
             # If the weights and number of principal_components (or None)
             # are the same as when the arrays were cached, then use the cache:
             if cached_n_pc == n_principal_components and np.array_equal(cached_W, W):
-                BTW, B, BTWB = cached_arrays
+                BTW, B, BTWB_LU_decomp = cached_arrays
                 cache_valid = True
 
         if not cache_valid:
@@ -264,18 +265,25 @@ class CPUReconstructor(object):
             # Compute the LHS of the linear system, (B.T W B)
             BTWB = np.dot(BTW, B)
 
+            # LU factor the LHS of the linear system. We will solve the system
+            # by LU decomposition and then calling scipy.linalg.lu_solve. This
+            # is the same algorithm as calling np.linalg.solve(), but allows
+            # us to cache the intermediate LU decomposition in case it can be
+            # used again:
+            BTWB_LU_decomp = lu_factor(BTWB)
+
             # Cache the arrays for next time, since they are expensive to
             # recompute. Save the mask and n_principal_components, since re-
             # using the cache is only valid if they are the same. The only downside
             # to this I think is extra memory consumption. B should be a view, so 
             # should not consume condiderable memory, but BTW is large.
-            self.cached_arrays = n_principal_components, W, (BTW, B, BTWB)
+            self.cached_arrays = n_principal_components, W, (BTW, B, BTWB_LU_decomp)
         
         # Compute the RHS of the linear system, (B.T W) a:
         BTWa = np.dot(BTW, a)
 
         # Solve the linear system:
-        x = np.linalg.solve(BTWB, BTWa)
+        x = lu_solve(BTWB_LU_decomp, BTWa)
 
         # Do the reconstruction a_rec = B x:
         a_rec = np.dot(B, x)
