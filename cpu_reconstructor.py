@@ -105,8 +105,8 @@ class CPUReconstructor(object):
         # Cache the results of PCA:
         self.pca_results = None
 
-        # Cache the LHS of the system of linear equations:
-        self.cached_LHS = None
+        # Cache the some expensive-to-compute arrays:
+        self.cached_arrays = None
         
     def add_ref_image(self, ref_image):
         """Add a reference image to the array of reference images used for
@@ -135,8 +135,8 @@ class CPUReconstructor(object):
         # Mark PCA as out of date
         self.pca_results = None
 
-        # Mark cached LHS as out of date:
-        self.cached_LHS = None
+        # Mark cached arrays as out of date
+        self.cached_arrays = None
 
 
     def add_ref_images(self, ref_images):
@@ -197,9 +197,8 @@ class CPUReconstructor(object):
             msg = 'image shape does not match'
             raise ValueError(msg)
         self.pca_results = mean_vector, principal_components, evals
-        # Mark cached LHS as out of date:
-        self.cached_LHS = None
-
+        # Mark cached arrays as out of date:
+        self.cached_arrays = None
 
     def reconstruct(self, image, uncertainties=None, mask=None, n_principal_components=None):
         """Reconstruct image as a sum of reference images based on the
@@ -241,27 +240,36 @@ class CPUReconstructor(object):
         # for x and then reconstruct the image as:
         #     a_rec = B x
         
-        # Compute (B.T W) and B:
-        BTW = BT * W
-        B = BT.T
+        
+        cache_valid = False
 
-        # Compute the LHS of the linear system, (B.T W B)
-        BTWB = None
-        if self.cached_LHS is not None:
-            cached_n_pc, cached_W, cached_LHS = self.cached_LHS
+        # Check if we've cached the arrays we need:
+        if self.cached_arrays is not None:
+            cached_n_pc, cached_W, cached_arrays = self.cached_arrays
             # If the weights and number of principal_components (or None)
-            # are the same as when the LHS was cached, then use the cache:
+            # are the same as when the arrays were cached, then use the cache:
             if cached_n_pc == n_principal_components and np.array_equal(cached_W, W):
-                BTWB = cached_LHS
-        if BTWB is None:
+                BTW, B, BTWB = cached_arrays
+                cache_valid = True
+
+        if not cache_valid:
             # If there was nothing cached, or if the weights or number of
-            # principal components didn't match the cache, recompute the LHS:
+            # principal components didn't match the cache, compute the arrsys
+            # from scratch:
+            
+            # Compute (B.T W) and B:
+            BTW = BT * W
+            B = BT.T
+
+            # Compute the LHS of the linear system, (B.T W B)
             BTWB = np.dot(BTW, B)
 
-            # Save the LHS of the linear system, since it is expensive to
-            # recompute. Save the mask and n_principal_components, since
-            # re-using the cache is only valid if they are the same:
-            self.cached_LHS = n_principal_components, W, BTWB
+            # Cache the arrays for next time, since they are expensive to
+            # recompute. Save the mask and n_principal_components, since re-
+            # using the cache is only valid if they are the same. The only downside
+            # to this I think is extra memory consumption. B should be a view, so 
+            # should not consume condiderable memory, but BTW is large.
+            self.cached_arrays = n_principal_components, W, (BTW, B, BTWB)
         
         # Compute the RHS of the linear system, (B.T W) a:
         BTWa = np.dot(BTW, a)
