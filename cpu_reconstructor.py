@@ -201,13 +201,21 @@ class CPUReconstructor(object):
         # Mark cached arrays as out of date:
         self.cached_arrays = None
 
-    def reconstruct(self, image, uncertainties=None, mask=None, n_principal_components=None):
+    def reconstruct(self, image, uncertainties=None, mask=None,
+                    n_principal_components=None, return_coeffs=False):
         """Reconstruct image as a sum of reference images based on the
         weighted least squares solution in the region where mask=1. If
         uncertainties is None, all ones will be used. If mask is None, all
         True will be used. If n_principal_components is not None, the
         reconstruction will use the requested number of principal components
-        of the reference images instead of the reference images directly"""
+        of the reference images instead of the reference images directly. If
+        return_coeffs is True, a list of coefficients for the linear sum is
+        also returned. Note that since images are centred prior to PCA and
+        reconstruction when using PCA, the difference between the mean image
+        and the target image is what is reconstructed using a linear sum of
+        principal components, so the reconstructed image is:
+
+        recon_image = mean_image + \sum_i coeff_i * pca_basis_vector_i"""
         if not self.initialised and self.pca_results is None:
             msg = "No reference images added or previously computed PCA basis loaded"
             raise RuntimeError(msg)
@@ -297,5 +305,8 @@ class CPUReconstructor(object):
         # Compute reduced chi2 error statistic:
         rchi2_recon = reduced_chi2(image, reconstructed_image, uncertainties, mask)
 
-
-        return reconstructed_image, rchi2_recon
+        if return_coeffs:
+            return reconstructed_image, rchi2_recon, x
+        else:
+            return reconstructed_image, rchi2_recon
+            
