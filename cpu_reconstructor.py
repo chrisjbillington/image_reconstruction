@@ -306,7 +306,6 @@ class CPUReconstructor(object):
         rchi2_recon = reduced_chi2(image, reconstructed_image, uncertainties, mask)
 
         if return_coeffs:
-            return reconstructed_image, rchi2_recon, x
+            return reconstructed_image, rchi2_recon, x.flatten()
         else:
             return reconstructed_image, rchi2_recon
-            
