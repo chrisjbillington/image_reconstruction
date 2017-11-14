@@ -5,18 +5,27 @@ from scipy.linalg import lu_factor, lu_solve
 from . import reduced_chi2
 
 
-def pca(BT):
+def pca(BT, centered=True):
     """Principal component analysis on set of reference vectors that are rows
     of BT. Returns the mean vector, principal components as rows of a matrix
     XT, and variance explained by each, with the most important principal
     components first. If the number of elements in each vector is greater than
     the number of vectors, then n_elements principal components are returned.
-    otherwise n_vectors - 1 are returned.
+    otherwise n_vectors - 1 are returned. If not centered, the mean will not
+    be subtracted off the data, such that the matrix of non-central second
+    moments is diagonalised rather than the covariance matrix. In this case,
+    and when the number of elements in each vector exceeds the number of
+    vectors, n_vectors principal components are returned rather than
+    n_vectors - 1.
     """
     num_refs, n_pixels = BT.shape
 
     # Center the data about its mean
-    mean_vector = BT.mean(axis=0)
+    if centered:
+        mean_vector = BT.mean(axis=0)
+    else:
+        mean_vector = np.zeros(n_pixels)
+
     XT = BT - mean_vector
 
     X = XT.T
@@ -85,9 +94,10 @@ def pca(BT):
 
 
 class CPUReconstructor(object):
-    def __init__(self, max_ref_images=None):
+    def __init__(self, max_ref_images=None, centered_PCA=True):
         self.max_ref_images = max_ref_images
         self.initialised = False
+        self.centered_PCA = centered_PCA
         
     def _init(self, ref_image):
         self.n_pixels = ref_image.size
@@ -162,7 +172,7 @@ class CPUReconstructor(object):
             msg = "No reference images added or previously computed PCA basis loaded"
             raise RuntimeError(msg)
         if self.pca_results is None:
-            self.pca_results = pca(self.BT[:self.n_ref_images])
+            self.pca_results = pca(self.BT[:self.n_ref_images], self.centered_PCA)
         return self.pca_results
 
     def save_pca(self, filepath):
