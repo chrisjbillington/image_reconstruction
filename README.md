@@ -58,4 +58,4 @@ since the bottleneck of the reconstruction algorithm runs in quadratic time
 with respect to the number of images, but parallelises nicely.
 
 The principal component analysis functionality is only implemented in the CPU
-reconstructor, but there is no barrier to it being implemented using CUDA as
+reconstructor, but there is no barrier to it being implemented using CUDA as well.
