@@ -47,10 +47,11 @@ def pca(BT, centered=True):
         # recover some memory:
         del covariance_image_basis
 
-        # Discard the eigenvector with smallest eigenvalue, due to the
-        # centering of the data, it is not orthogonal to the rest.
-        evals = evals[1:]
-        evecs_image_basis = evecs_image_basis[:, 1:]
+        if centered:
+            # Discard the eigenvector with smallest eigenvalue, due to the
+            # centering of the data, it is not orthogonal to the rest.
+            evals = evals[1:]
+            evecs_image_basis = evecs_image_basis[:, 1:]
 
         # Convert eigenvectors back into the pixel basis and normalise
         evecs_pixel_basis = np.dot(X, evecs_image_basis)
