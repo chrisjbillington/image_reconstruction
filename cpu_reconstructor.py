@@ -212,21 +212,56 @@ class CPUReconstructor(object):
         # Mark cached arrays as out of date:
         self.cached_arrays = None
 
-    def reconstruct(self, image, uncertainties=None, mask=None,
-                    n_principal_components=None, return_coeffs=False):
-        """Reconstruct image as a sum of reference images based on the
-        weighted least squares solution in the region where mask=1. If
-        uncertainties is None, all ones will be used. If mask is None, all
-        True will be used. If n_principal_components is not None, the
-        reconstruction will use the requested number of principal components
-        of the reference images instead of the reference images directly. If
-        return_coeffs is True, a list of coefficients for the linear sum is
-        also returned. Note that since images are centred prior to PCA and
-        reconstruction when using PCA, the difference between the mean image
-        and the target image is what is reconstructed using a linear sum of
-        principal components, so the reconstructed image is:
+    def reconstruct(
+        self,
+        image,
+        uncertainties=None,
+        mask=None,
+        fourier_mask=None,
+        n_principal_components=None,
+        return_coeffs=False,
+    ):
+        r"""Reconstruct image as a sum of reference images based on the weighted least
+        squares solution in the region in real space where mask=1, and region in Fourier
+        space where fourier_mask=1. If uncertainties is None, all ones will be used. If
+        either mask is None, all True will be used. If n_principal_components is not
+        None, the reconstruction will use the requested number of principal component
+        eigenvectors of the reference images instead of the reference images directly.
+        If return_coeffs is True, a list of coefficients for the linear sum is also
+        returned. Note that if the reconstructor was initialised with centred PCA, and
+        reconstruction uses PCA, them the difference between the mean image and the
+        target image is what is reconstructed using a linear sum of principal components
+        eigenvectors, so the reconstructed image is:
 
-        recon_image = mean_image + \sum_i coeff_i * pca_basis_vector_i"""
+            recon_image = mean_image + \sum_i coeff_i * pca_basis_vector_i
+
+        Otherwise if centered_PCA=False when instantiating the recontructor, the
+        reconstructed image is:
+
+            recon_image = \sum_i coeff_i * pca_basis_vector_i
+
+        And if PCA is not used:
+
+            recon_image = \sum_i coeff_i * reference_image_i
+
+        Reconstruction is done by solving the weighted least squares problem:
+
+            (B.T * W * B) * x = (B.T * W) * a
+
+            a_reconstructed = B * x
+
+        where a is the image being reconstructed, x is the solution as a list of
+        coefficients, B is a matrix of column vectors of reference images or PCA
+        eigenvectors, and W is the weights matrix, which we use to apply uncertainties
+        and a mask in Fourier space:
+
+            W = sqrt(W_real) * U.T * W_fourier * U * sqrt(W_real)
+
+        Where W_real is a diagonal matrix with diagonals mask / uncertainties**2,
+        W_fourier is a diagonal matrix with diagonals equal to fourier_mask, and U is
+        the unitary matrix for a Fourier transform.
+
+        """
         if not self.initialised and self.pca_results is None:
             msg = "No reference images added or previously computed PCA basis loaded"
             raise RuntimeError(msg)
@@ -243,7 +278,11 @@ class CPUReconstructor(object):
             mask = mask.astype(bool)
 
         # Calculate weights, and convert and reshape arrays:
-        W = (mask/uncertainties**2).astype(float).flatten()
+        sqrtW_R = np.sqrt((mask/uncertainties**2).astype(float).flatten())
+        if fourier_mask is None:
+            W_F = None
+        else:
+            W_F = (fourier_mask).astype(bool).astype(float).flatten()
         a = image.reshape(image.size, 1).astype(float)
 
         if n_principal_components is not None:
@@ -256,33 +295,48 @@ class CPUReconstructor(object):
             BT = self.BT[:self.n_ref_images]
 
         # Now we solve the weighted least squares problem
+        #
         #     (B.T W B) x = (B.T W) a
+        #
         # for x and then reconstruct the image as:
+        #
         #     a_rec = B x
-        
-        
+        #
+        # First we split W into a transpose pair:
+        #
+        #     W = sqrt(W_R) U.T sqrt(W_F) sqrt(W_F) U sqrt(W_R)
+        #       = V.T V
+        #
+        # Where U is a Fourier transform. This simplifies calculations a bit since then
+        # the least squares problem can be restated as:
+        #
+        #     (V B).T (V B) x = (V B).T V a
+        #
+        # This saves us some calculations because VB only needs to be calculated once
+
         cache_valid = False
 
         # Check if we've cached the arrays we need:
         if self.cached_arrays is not None:
-            cached_n_pc, cached_W, cached_arrays = self.cached_arrays
+            _n_pc, _sqrtW_R, _W_F, cached_arrays = self.cached_arrays
             # If the weights and number of principal_components (or None)
             # are the same as when the arrays were cached, then use the cache:
-            if cached_n_pc == n_principal_components and np.array_equal(cached_W, W):
-                BTW, B, BTWB_LU_decomp = cached_arrays
-                cache_valid = True
+            if _n_pc == n_principal_components and np.array_equal(_sqrtW_R, sqrtW_R):
+                if (_W_F is W_F) or np.array_equal(_W_F, W_F):
+                    BTW, B, BTWB_LU_decomp = cached_arrays
+                    cache_valid = True
 
         if not cache_valid:
             # If there was nothing cached, or if the weights or number of
             # principal components didn't match the cache, compute the arrsys
             # from scratch:
             
-            # Compute (B.T W) and B:
-            BTW = BT * W
-            B = BT.T
+            # Compute (B.T sqrt(W)) and sqrt(W) B:
+            BTsqrtW = BT * sqrtW_R
+            sqrtWB = BTsqrtW.T
 
             # Compute the LHS of the linear system, (B.T W B)
-            BTWB = np.dot(BTW, B)
+            BTWB = np.dot(BTsqrtW, sqrtWB)
 
             # LU factor the LHS of the linear system. We will solve the system
             # by LU decomposition and then calling scipy.linalg.lu_solve. This
@@ -294,12 +348,17 @@ class CPUReconstructor(object):
             # Cache the arrays for next time, since they are expensive to
             # recompute. Save the mask and n_principal_components, since re-
             # using the cache is only valid if they are the same. The only downside
-            # to this I think is extra memory consumption. B should be a view, so 
+            # to this I think is extra memory consumption. B should be a view, so
             # should not consume condiderable memory, but BTW is large.
-            self.cached_arrays = n_principal_components, W, (BTW, B, BTWB_LU_decomp)
+            self.cached_arrays = (
+                n_principal_components,
+                sqrtW_R,
+                W_F,
+                (BTW, B, BTWB_LU_decomp),
+            )
         
         # Compute the RHS of the linear system, (B.T W) a:
-        BTWa = np.dot(BTW, a)
+        BTWa = np.dot(BTsqrtW, sqrtW_R[:, np.newaxis] * a)
 
         # Solve the linear system:
         x = lu_solve(BTWB_LU_decomp, BTWa)
