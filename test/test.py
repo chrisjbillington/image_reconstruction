@@ -6,8 +6,10 @@ import matplotlib
 # matplotlib.use('Agg')
 
 import sys
+from pathlib import Path
+
 # Add path to modules
-sys.path.append('../..')
+sys.path.append(str(Path(__file__).absolute().parent.parent.parent))
 
 from image_reconstruction import reduced_chi2
 
