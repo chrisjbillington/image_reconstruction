@@ -1,22 +1,29 @@
 from __future__ import division, print_function
 import numpy as np
 from scipy.linalg import lu_factor, lu_solve
+from sklearn.utils.extmath import randomized_svd
 
 from . import reduced_chi2
 
 
-def pca(BT, centered=True):
+def pca(BT, n_components=None, centered=True):
     """Principal component analysis on set of reference vectors that are rows
     of BT. Returns the mean vector, principal components as rows of a matrix
     XT, and variance explained by each, with the most important principal
-    components first. If the number of elements in each vector is greater than
-    the number of vectors, then n_elements principal components are returned.
-    otherwise n_vectors - 1 are returned. If not centered, the mean will not
-    be subtracted off the data, such that the matrix of non-central second
-    moments is diagonalised rather than the covariance matrix. In this case,
-    and when the number of elements in each vector exceeds the number of
-    vectors, n_vectors principal components are returned rather than
-    n_vectors - 1.
+    components first. If n_components is None, all principal components are
+    computed: if the number of elements in each vector is greater than the
+    number of vectors, then n_elements principal components are returned,
+    otherwise n_vectors - 1 are returned. If n_components is not None, only
+    the n_components most important principal components are computed, using
+    randomized SVD (sklearn.utils.extmath.randomized_svd), which is much
+    cheaper than computing all of them when n_components is small compared to
+    the number of vectors. If n_components is greater than or equal to the
+    number of principal components that exist, all of them are computed
+    exactly. If not centered, the mean will not be subtracted off the data,
+    such that the matrix of non-central second moments is diagonalised rather
+    than the covariance matrix. In this case, and when the number of elements
+    in each vector exceeds the number of vectors, n_vectors principal
+    components are returned rather than n_vectors - 1.
     """
     num_refs, n_pixels = BT.shape
 
@@ -27,6 +34,20 @@ def pca(BT, centered=True):
         mean_vector = np.zeros(n_pixels)
 
     XT = BT - mean_vector
+
+    # The number of principal components that exist. Centering reduces the
+    # rank of the data by one.
+    max_components = min(num_refs - int(centered), n_pixels)
+
+    if n_components is not None and n_components < max_components:
+        # Compute only the leading n_components singular vectors of XT. The
+        # right singular vectors are the principal components, and the
+        # squared singular values are the eigenvalues of the covariance
+        # matrix (X.T X). Both are returned by randomized_svd in order of
+        # decreasing singular value.
+        _, singular_values, principal_components = randomized_svd(XT, n_components)
+        evals = singular_values**2
+        return mean_vector, principal_components, evals
 
     X = XT.T
 
@@ -114,8 +135,10 @@ class CPUReconstructor(object):
         self.ref_image_hashes = []
         self.n_ref_images = 0
 
-        # Cache the results of PCA:
+        # Cache the results of PCA, and the number of principal components
+        # they were computed with (None for the complete set):
         self.pca_results = None
+        self.pca_n_components = None
 
         # Cache the some expensive-to-compute arrays:
         self.cached_arrays = None
@@ -156,29 +179,64 @@ class CPUReconstructor(object):
         for ref_image in ref_images:
             self.add_ref_image(ref_image)
             
-    def pca_images(self):
+    def pca_images(self, n_components=None):
         """Return mean_image, principal_component_images, variances, the same
-        as update_pca() except reshaped to the image shape"""
-        mean_vector, principal_components, variances = self.pca()
+        as pca() except reshaped to the image shape"""
+        mean_vector, principal_components, variances = self.pca(n_components)
         shape = (len(principal_components),) + self.image_shape
         principal_component_images = principal_components.reshape(shape)
         mean_image = mean_vector.reshape(self.image_shape)
         return mean_image, principal_component_images, variances
 
-    def pca(self):
-        """Check if principal component analysis has been done on the current
-        set of reference images and do it if it hasn't. Return mean_vector,
-        principal_components, variances"""
+    def pca(self, n_components=None):
+        """Return mean_vector, principal_components, variances for the current
+        set of reference images, computing them if they are not already
+        cached. If n_components is None, all principal components are
+        returned. Otherwise only the n_components most important principal
+        components are returned, computed using randomized SVD, which is much
+        cheaper than computing all of them when n_components is small
+        compared to the number of reference images. Cached results are reused
+        if they contain at least n_components principal components, in which
+        case the first n_components of them are returned."""
         if not self.initialised and self.pca_results is None:
             msg = "No reference images added or previously computed PCA basis loaded"
             raise RuntimeError(msg)
-        if self.pca_results is None:
-            self.pca_results = pca(self.BT[:self.n_ref_images], self.centered_PCA)
-        return self.pca_results
+        if not self._pca_cache_valid(n_components):
+            self.pca_results = pca(
+                self.BT[:self.n_ref_images], n_components, self.centered_PCA
+            )
+            _, principal_components, _ = self.pca_results
+            if n_components is not None and len(principal_components) < n_components:
+                # Fewer principal components exist than were requested, so
+                # the cached results are the complete set:
+                self.pca_n_components = None
+            else:
+                self.pca_n_components = n_components
+            # Mark cached arrays as out of date, since they may have been
+            # computed from a different PCA basis:
+            self.cached_arrays = None
+        mean_vector, principal_components, evals = self.pca_results
+        if n_components is not None:
+            principal_components = principal_components[:n_components]
+            evals = evals[:n_components]
+        return mean_vector, principal_components, evals
 
-    def save_pca(self, filepath):
-        """Save cached PCA results to disk"""
-        mean_vector, principal_component, evals = self.pca()
+    def _pca_cache_valid(self, n_components):
+        """Whether the cached PCA results, if any, contain the requested
+        number of principal components. self.pca_n_components is None if the
+        cache contains the complete set of principal components."""
+        if self.pca_results is None:
+            return False
+        if self.pca_n_components is None:
+            return True
+        if n_components is None:
+            return False
+        return n_components <= self.pca_n_components
+
+    def save_pca(self, filepath, n_components=None):
+        """Save PCA results to disk, computing them if they are not already
+        cached. n_components is as for pca()."""
+        mean_vector, principal_component, evals = self.pca(n_components)
         image_shape = np.array(self.image_shape)
         with open(filepath, 'wb') as f:
             np.save(f, image_shape)
@@ -209,6 +267,9 @@ class CPUReconstructor(object):
             msg = 'image shape does not match'
             raise ValueError(msg)
         self.pca_results = mean_vector, principal_components, evals
+        # The loaded basis is used as-is, regardless of how many principal
+        # components are requested:
+        self.pca_n_components = None
         # Mark cached arrays as out of date:
         self.cached_arrays = None
 
@@ -249,9 +310,9 @@ class CPUReconstructor(object):
         if n_principal_components is not None:
             # Center the image and use the principal components as reference
             # basis:
-            mean_vector, principal_components, _ = self.pca()
+            mean_vector, principal_components, _ = self.pca(n_principal_components)
             a -= mean_vector[:, None]
-            BT = principal_components[:n_principal_components]
+            BT = principal_components
         else:
             BT = self.BT[:self.n_ref_images]
 
