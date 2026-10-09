@@ -214,7 +214,7 @@ class CPUReconstructor(object):
 
     def reconstruct(self, image, uncertainties=None, mask=None,
                     n_principal_components=None, return_coeffs=False):
-        """Reconstruct image as a sum of reference images based on the
+        R"""Reconstruct image as a sum of reference images based on the
         weighted least squares solution in the region where mask=1. If
         uncertainties is None, all ones will be used. If mask is None, all
         True will be used. If n_principal_components is not None, the
